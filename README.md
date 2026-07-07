@@ -30,7 +30,9 @@ Compiles `src/im-right-here.twee` → `index.html` with [Tweego](https://www.mot
 
 | piece | what it is |
 |---|---|
-| `src/im-right-here.twee` | the whole story: 20 passages + stylesheet + two script passages |
+| `src/im-right-here.twee` | the whole story: 20 passages + stylesheet + two script passages + the `<<plate>>` widget |
+| `art/` | the six commissioned plates at full weight, with their generation prompts ([art/PROMPTS.md](art/PROMPTS.md)) — hush, ear, corridor, found, cabaret, rehearsal |
+| `img/` + `tools/derive-art.ps1` | the web derivatives the story actually loads (840px JPEG, ~100–200 KB each); rerun the script after adding or replacing a plate |
 | `wall-hum` script passage | the Web Audio module (`window.WallHum`): hum level 0–7 driven by `$hum`, whisper-noise and door-knock one-shots fired off passage tags (`whisper`, `knock`), and a `resolve()` that bends the drone to a fifth and then — for the first time in the building — stops |
 | `dada-setup` script passage | the syllable pool (Ursonate / Karawane shards) and the no-repeat draw |
 | `$syllables` | the name you assemble; 3 to perform, 6 caps the hoard |

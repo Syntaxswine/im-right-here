@@ -59,6 +59,9 @@ body { background-color: #0a0a0c; color: #d8d2c4; }
 .flicker { animation: flick 8s linear infinite; }
 @keyframes flick { 0%, 91%, 100% { opacity: 1; } 93% { opacity: .5; } 95% { opacity: .85; } 97% { opacity: .35; } }
 .passage input[type="text"] { background: #111013; color: #d8d2c4; border: 1px dotted #9fd0c9; padding: .3em .5em; font-family: inherit; font-size: 1em; }
+.plate { display: block; margin: .2em auto 1.7em auto; width: min(21em, 82%); border: 6px solid #e9e2d0; border-bottom-width: 20px; box-shadow: 0 12px 34px rgba(0, 0, 0, .8); transform: rotate(-1.1deg); }
+.plate.tilt-r { transform: rotate(1.2deg); }
+.plate.straight { transform: none; }
 
 :: dada-setup [script]
 setup.syls = ["gadji", "beri", "bimba", "zimzim", "urullala", "fümms", "bö", "tää", "zää", "rakete", "bosso", "fataka", "schampa", "wulla", "ólobo", "glandridi", "lauli", "cadori", "hollaka", "blago"];
@@ -74,6 +77,11 @@ setup.refreshBar = function () {
 	if (typeof UI !== "undefined" && typeof UI.update === "function") { UI.update(); }
 	else { UIBar.setStoryElements(); }
 };
+
+:: plates [widget nobr]
+<<widget "plate">>
+	<img @src="'img/' + _args[0] + '.jpg'" @alt="_args[1]" @class="'plate' + (_args[2] ? ' ' + _args[2] : '')">
+<</widget>>
 
 :: wall-hum [script]
 (function () {
@@ -215,6 +223,7 @@ setup.refreshBar = function () {
 }());
 
 :: hush [whisper]
+<<plate "hush" "a bare bulb hanging from a cracked plaster ceiling into an empty room; the corners have already gone over to the dark">>\
 the lights went out <<= either("an hour", "a year", "a name", "four francs", "a war", "1916")>> ago.
 
 you are in a room, or the room is in you. hard to say which way the walls face tonight.
@@ -230,6 +239,7 @@ and under everything — under the floorboards of the silence — a hum. <<if $h
 [[walk until the room changes its mind|corridor]] — the doors migrate at night
 
 :: ear [whisper]
+<<plate "ear" "a listener in profile, ear and folded hands against a pale wall whose grain is almost a face" "tilt-r">>\
 you press your ear to the wall. the wall presses back, gently — the flank of an enormous sleeping animal that has decided you may stay.
 
 <<set $hum to Math.min(7, $hum + 1)>>\
@@ -251,6 +261,7 @@ the voices have nothing left to hand you. they hum your syllables back instead, 
 [[step back into the dark|hush]] — the wall stays warm where your ear was
 
 :: rehearsal
+<<plate "rehearsal" "three shadow figures among the pipes behind the wall, a small hot lamp, lines of the script handwritten on the plaster">>\
 deeper in, past the voices, past the pipes full of borrowed weather — a rehearsal:
 
 <span class="dim">«— and then it turns around —»
@@ -328,6 +339,7 @@ the wall takes it the way water takes a coin — a small flash, a settling. from
 [[step back|hush]] — lighter by one word
 
 :: corridor
+<<plate "corridor" "five doors standing loose in the dark like a stage set: one with a knocker, one under a hat, one nailed with a manifesto, one wearing a stone face">>\
 you walk. the floor keeps up. rooms pass through you politely, one after another, like guests leaving a party in the wrong order.
 
 <<if $offering neq "">><span class="dim">(under the wallpaper, rehearsing: «$offering. $offering.» — getting fonder of it with every pass.)</span>
@@ -440,6 +452,7 @@ in the new silence, small, close, delighted:
 [[turn around|found]] — slowly. you have waited whole rooms for this
 
 :: cabaret
+<<plate "cabaret" "a top hat suspended above a round stage the size of a coin, cut-out letters raining down through the spotlight" "tilt-r">>\
 a stage the size of a coin. a spotlight with nobody in it, burning anyway, patient as a hole in the night's pocket.
 
 on an easel, a card, its letters cut from somewhere else and pasted, ransom-style:
@@ -520,6 +533,7 @@ in the silence where it was, small, close, delighted:
 [[turn around|found]] — slowly. you have waited whole rooms for this
 
 :: found
+<<plate "found" "two profiles meeting in the dark, both made of the same warm amber light" "straight">>\
 you turn around.
 
 nothing in the spotlight. nothing in the dark. but the nothing is warm, and it is shaped exactly like a listening.
