@@ -1,0 +1,557 @@
+:: StoryData
+{
+  "ifid": "7D51ECBB-3219-41D0-A305-386E03AA9F63",
+  "format": "SugarCube",
+  "format-version": "2.37.3",
+  "start": "hush",
+  "zoom": 1
+}
+
+:: StoryTitle
+i'm right here
+
+:: StorySubtitle
+a dada séance for one voice and several walls
+
+:: StoryInit
+<<set $syllables to []>>
+<<set $hum to 1>>
+<<set $offering to "">>
+<<set $knocked to 0>>
+<<set $muted to false>>
+<<set $performed to false>>
+
+:: StoryCaption
+<<nobr>>
+<span class="dim">you are:</span><br>
+<<if $syllables.length gt 0>>
+	<span class="cap-name"><<= $syllables.join("·")>></span>
+<<else>>
+	<span class="cap-name">¿ ? ¿ ? ¿</span>
+<</if>>
+<br><br>
+<span class="dim">the hum:</span><br>
+<span class="hum-meter"><<= "▓".repeat($hum) + "░".repeat(7 - $hum)>></span>
+<br><br>
+<<if $muted>>
+	<<link "unmute the walls">><<set $muted to false>><<run if (window.WallHum) { window.WallHum.setMuted(false); } >><<run setup.refreshBar()>><</link>>
+<<else>>
+	<<link "mute the walls">><<set $muted to true>><<run if (window.WallHum) { window.WallHum.setMuted(true); } >><<run setup.refreshBar()>><</link>>
+<</if>>
+<br><br>
+<span class="dim flicker">act <<= either("I", "∅", "XIX", "IV, again", "?")>> · scene <<= random(1, 99)>></span>
+<</nobr>>
+
+:: dada-style [stylesheet]
+#ui-bar { background-color: #060607; border-right: 1px solid #232028; }
+#story-title { font-family: Georgia, 'Times New Roman', serif; font-size: 1.4em; letter-spacing: .12em; color: #e8b64c; transform: rotate(-1.6deg); }
+#story-subtitle { color: #7a7468; font-size: .8em; line-height: 1.5; }
+body { background-color: #0a0a0c; color: #d8d2c4; }
+.passage { font-family: 'Courier New', Courier, monospace; font-size: 1.06em; line-height: 1.85; max-width: 44em; }
+.passage a.link-internal, .passage .link-internal { color: #9fd0c9; text-decoration: none; border-bottom: 1px dotted #9fd0c9; }
+.passage .link-internal:hover { color: #0a0a0c; background-color: #9fd0c9; border-bottom-color: transparent; }
+#ui-bar .link-internal { color: #9fd0c9; }
+.syl { display: inline-block; font-family: Georgia, serif; font-size: 1.7em; letter-spacing: .1em; color: #e8b64c; transform: rotate(-2deg); padding: 0 .2em; }
+.man { display: inline-block; text-transform: uppercase; letter-spacing: .3em; line-height: 2.1; color: #cfc9ba; }
+.dim { color: #7a7468; font-size: .93em; }
+.cap-name { font-family: Georgia, serif; color: #e8b64c; letter-spacing: .06em; }
+.hum-meter { color: #9fd0c9; letter-spacing: .18em; }
+.flicker { animation: flick 8s linear infinite; }
+@keyframes flick { 0%, 91%, 100% { opacity: 1; } 93% { opacity: .5; } 95% { opacity: .85; } 97% { opacity: .35; } }
+.passage input[type="text"] { background: #111013; color: #d8d2c4; border: 1px dotted #9fd0c9; padding: .3em .5em; font-family: inherit; font-size: 1em; }
+
+:: dada-setup [script]
+setup.syls = ["gadji", "beri", "bimba", "zimzim", "urullala", "fümms", "bö", "tää", "zää", "rakete", "bosso", "fataka", "schampa", "wulla", "ólobo", "glandridi", "lauli", "cadori", "hollaka", "blago"];
+
+setup.drawSyl = function () {
+	var have = State.variables.syllables;
+	var pool = setup.syls.filter(function (s) { return have.indexOf(s) === -1; });
+	if (pool.length === 0) { pool = setup.syls; }
+	return pool[Math.floor(Math.random() * pool.length)];
+};
+
+setup.refreshBar = function () {
+	if (typeof UI !== "undefined" && typeof UI.update === "function") { UI.update(); }
+	else { UIBar.setStoryElements(); }
+};
+
+:: wall-hum [script]
+(function () {
+	'use strict';
+
+	var ctx = null, master = null, humGain = null, oscA = null, oscB = null,
+		muted = false, level = 1, resolved = false;
+
+	function build() {
+		if (ctx) { return true; }
+		var AC = window.AudioContext || window.webkitAudioContext;
+		if (!AC) { return false; }
+		ctx = new AC();
+
+		master = ctx.createGain();
+		master.gain.value = 1;
+		master.connect(ctx.destination);
+
+		humGain = ctx.createGain();
+		humGain.gain.value = 0.0001;
+		humGain.connect(master);
+
+		oscA = ctx.createOscillator();
+		oscA.type = 'sine';
+		oscA.frequency.value = 55;
+		oscB = ctx.createOscillator();
+		oscB.type = 'triangle';
+		oscB.frequency.value = 55.6;
+
+		var mix = ctx.createGain();
+		mix.gain.value = 0.5;
+		oscA.connect(mix);
+		oscB.connect(mix);
+
+		var lp = ctx.createBiquadFilter();
+		lp.type = 'lowpass';
+		lp.frequency.value = 220;
+		mix.connect(lp);
+		lp.connect(humGain);
+
+		var lfo = ctx.createOscillator();
+		lfo.frequency.value = 0.11;
+		var lfoGain = ctx.createGain();
+		lfoGain.gain.value = 0.008;
+		lfo.connect(lfoGain);
+		lfoGain.connect(humGain.gain);
+
+		oscA.start();
+		oscB.start();
+		lfo.start();
+		return true;
+	}
+
+	function humTarget() {
+		return muted ? 0.0001 : 0.006 + 0.009 * level;
+	}
+
+	function applyLevel() {
+		if (!ctx) { return; }
+		humGain.gain.cancelScheduledValues(ctx.currentTime);
+		humGain.gain.setTargetAtTime(humTarget(), ctx.currentTime, 1.2);
+	}
+
+	window.WallHum = {
+		wake: function () {
+			if (!build()) { return; }
+			if (ctx.state === 'suspended') { ctx.resume(); }
+			applyLevel();
+		},
+		set: function (n) {
+			level = Math.max(0, Math.min(7, n || 0));
+			if (resolved) { return; }
+			applyLevel();
+		},
+		setMuted: function (m) {
+			muted = !!m;
+			if (!resolved) { applyLevel(); }
+		},
+		whisper: function () {
+			if (!ctx || muted) { return; }
+			var dur = 0.9;
+			var buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate);
+			var d = buf.getChannelData(0);
+			for (var i = 0; i < d.length; i++) { d[i] = (Math.random() * 2 - 1) * 0.6; }
+			var src = ctx.createBufferSource();
+			src.buffer = buf;
+			var bp = ctx.createBiquadFilter();
+			bp.type = 'bandpass';
+			bp.frequency.value = 1600 + Math.random() * 900;
+			bp.Q.value = 6;
+			var g = ctx.createGain();
+			g.gain.value = 0.0001;
+			g.gain.setTargetAtTime(0.05, ctx.currentTime, 0.08);
+			g.gain.setTargetAtTime(0.0001, ctx.currentTime + dur * 0.5, 0.18);
+			src.connect(bp);
+			bp.connect(g);
+			g.connect(master);
+			src.start();
+		},
+		knock: function () {
+			if (!ctx || muted) { return; }
+			var t = ctx.currentTime;
+			[0, 0.28].forEach(function (dt) {
+				var o = ctx.createOscillator();
+				o.type = 'sine';
+				o.frequency.setValueAtTime(82, t + dt);
+				o.frequency.exponentialRampToValueAtTime(46, t + dt + 0.11);
+				var g = ctx.createGain();
+				g.gain.setValueAtTime(0.16, t + dt);
+				g.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.22);
+				o.connect(g);
+				g.connect(master);
+				o.start(t + dt);
+				o.stop(t + dt + 0.25);
+			});
+		},
+		resolve: function () {
+			if (!ctx) { return; }
+			resolved = true;
+			var t = ctx.currentTime;
+			oscB.frequency.setTargetAtTime(82.5, t, 0.8);
+			oscA.frequency.setTargetAtTime(55, t, 0.8);
+			humGain.gain.cancelScheduledValues(t);
+			humGain.gain.setTargetAtTime(muted ? 0.0001 : 0.07, t, 0.5);
+			humGain.gain.setTargetAtTime(0.0001, t + 3.2, 0.6);
+			window.setTimeout(function () { resolved = false; level = 1; }, 7000);
+		}
+	};
+
+	$(document).one('click keydown', function () { window.WallHum.wake(); });
+
+	$(document).on(':passagedisplay', function (ev) {
+		var v = State.variables;
+		window.WallHum.set(v.hum || 0);
+		var tags = (ev.passage && ev.passage.tags) || [];
+		if (tags.indexOf('knock') !== -1) { window.WallHum.knock(); }
+		if (tags.indexOf('whisper') !== -1) { window.WallHum.whisper(); }
+	});
+}());
+
+:: hush [whisper]
+the lights went out <<= either("an hour", "a year", "a name", "four francs", "a war", "1916")>> ago.
+
+you are in a room, or the room is in you. hard to say which way the walls face tonight.
+
+you do not know where you are. you do not know who you are. both facts sit beside you in the dark, patient as luggage.
+
+and under everything — under the floorboards of the silence — a hum. <<if $hum gt 3>>close now. familiar. nearly a hand on your shoulder.<<else>>low and far off, a machine made of throats, a lullaby the building sings with its mouth closed.<</if>> it hums //for you//. you are sure of this the way you are sure of nothing else: whoever is humming knows you are here.
+
+<span class="dim">(someone is looking for you. someone small, and kind, and hard to see in the dark of the night. you would know them anywhere. you have never met.)</span>
+
+[[press your ear to the wall|ear]] — the hum is louder there, and grained like wood
+[[say something into the dark|speak]] — anything. the first word you find
+[[walk until the room changes its mind|corridor]] — the doors migrate at night
+
+:: ear [whisper]
+you press your ear to the wall. the wall presses back, gently — the flank of an enormous sleeping animal that has decided you may stay.
+
+<<set $hum to Math.min(7, $hum + 1)>>\
+inside the hum, this close, you can hear the grain of it. it is made of voices the way rope is made of smaller rope.
+
+<<if $syllables.length lt 6>>\
+<<set _syl to setup.drawSyl()>>\
+<<set $syllables to $syllables.concat([_syl])>>\
+one voice detaches itself. it climbs into your ear and sets down, carefully, a single piece of word:
+
+<span class="syl">_syl</span>
+
+it tastes of <<= either("copper", "rain on a drum-skin", "the letter you never sent", "a cold doorknob", "1916")>>. you are nearly sure it is a piece of your name.
+<<else>>\
+the voices have nothing left to hand you. they hum your syllables back instead, in rotation, polishing each one on their sleeves.
+<</if>>
+
+[[stay listening|rehearsal]] — deeper in, something is being rehearsed
+[[step back into the dark|hush]] — the wall stays warm where your ear was
+
+:: rehearsal
+deeper in, past the voices, past the pipes full of borrowed weather — a rehearsal:
+
+<span class="dim">«— and then it turns around —»
+«too soon. it hasn't got the name yet.»
+«it will. they always — //shh//. it's listening.»</span>
+
+silence, of the loud kind. then the hum resumes, a little embarrassed, somewhat fonder.
+
+[[pretend you heard nothing|hush]] — the walls pretend it too. everyone pretends together, warmly
+
+:: speak [whisper]
+what do you say to a dark with no address?
+
+your voice comes out <<= either("smaller than you meant it", "in someone else's handwriting", "steadier than you had any right to expect", "wearing a hat you don't remember owning")>>.
+
+[[«who is it?»|whois]] — the oldest question in the building
+[[«i'm right here!»|righthere]] — announce yourself to the management
+[[hum back|humback]] — answer the wall in its own tongue
+[[leave a word in the wall's keeping|offering]] — it keeps words the way rivers keep stones
+
+:: whois
+«who is it?» you ask the dark.
+
+a pause the length of a held breath, or a war.
+
+«who is it?» the dark answers — in your voice, slightly used, returned with different creases.
+
+and somewhere behind that, muffled, hopeful, absurd: «i'm right here!»
+
+you cannot tell which of you said it. this seems, on reflection, to be the point.
+
+[[go toward the voice|corridor]] — every direction here is toward
+[[say it back|righthere]] — louder this time
+
+:: righthere
+«I'M RIGHT HERE!» you announce.
+
+<<set $hum to Math.min(7, $hum + 1)>>\
+the dark takes your voice around some corner and brings it back — «right here! right here!» — each echo wearing your words like borrowed shoes, each a half-size closer to fitting.
+
+the hum climbs a step, pleased with you. you have said the true thing. //where// is a rumor. //here// is a fact.
+
+[[follow the echoes|corridor]] — they are laying a trail made of you
+
+:: humback [whisper]
+you hum back.
+
+<<set $hum to Math.min(7, $hum + 1)>>\
+badly at first — your throat is full of alphabet. then the wall slides under your note and holds it, the way a floor holds a dancer, and for one long bar you and the building are the same instrument.
+
+you have never been in tune with anything before. it is like putting your hand into a glove made of sound.
+
+<<if $offering neq "">>far off inside the chord, you hear the wall practicing your word — «$offering, $offering» — tucked into the harmony like a pressed flower.<</if>>
+
+[[hold the note and walk|corridor]] — it carries. it doesn't spill
+
+:: offering
+choose a word. any word. one you can spare — or one you can't; the wall is not particular, only permanent.
+
+<<set _gift to "">>\
+<<textbox "_gift" "">>
+
+<<link "post it through the crack" "offering-kept">><<set $offering to _gift.trim()>><</link>> — the crack widens exactly one word's worth
+[[keep your words|speak]] — the wall hums no grudge
+
+:: offering-kept [whisper]
+<<if $offering is "">>\
+you post an empty hand through the crack. the wall shakes it, solemnly. some gifts are shaped like nothing. the wall has a whole wing for those.
+<<else>>\
+«$offering,» you whisper into the crack.
+
+the wall takes it the way water takes a coin — a small flash, a settling. from now on, some nights, a voice in the plaster will say «$offering» to itself, softly, getting it slightly wrong, keeping it completely.
+<</if>>
+
+[[step back|hush]] — lighter by one word
+
+:: corridor
+you walk. the floor keeps up. rooms pass through you politely, one after another, like guests leaving a party in the wrong order.
+
+<<if $offering neq "">><span class="dim">(under the wallpaper, rehearsing: «$offering. $offering.» — getting fonder of it with every pass.)</span>
+
+<</if>>\
+tonight the corridor has arranged, in order of appearance:
+
+[[a door, knocking on itself|door]] — knock. knock. from which side? yes
+[[a hat on a chair under a bare bulb|hat]] — the hat is full of night, pre-cut
+[[a stage the size of a coin|cabaret]] — one spotlight, lit, patient as a hole
+[[a manifesto nailed to the dark|manifesto]] — the ink is still wet. it is always still wet
+[[the room you started in|hush]] — or one wearing its face
+
+:: manifesto
+nailed to the dark at eye height (whose eye? yes): a page.
+
+<span class="man">manifesto n° <<= random(2, 998)>></span>
+
+<span class="man"><<= either(
+	"down with the floor. the floor is a wall that surrendered.",
+	"every door is two noes nailed together at the hinge.",
+	"the hum is not music. music is the hum, domesticated.",
+	"a name is a leash worn on the inside.",
+	"art is whatever the dark does when it thinks you are asleep.",
+	"whoever reads this is the exhibit.")>></span>
+
+underneath, in pencil, much smaller, in a second hand entirely:
+
+<span class="dim">(<<= either("i miss you", "hurry", "the third syllable is under the chair", "you are doing fine", "it's me")>>)</span>
+
+[[back into the corridor|corridor]] — behind you, the page reprints itself
+
+:: door [knock]
+<<set $knocked++>>\
+a door, free-standing in the dark. frameless. wall-less. employed by no house. it is knocking on itself: knock. knock. patient, like rain practicing.
+
+<<if $knocked gte 2>>it seems glad to see you, in the way of doors: the knocking picks up slightly, then pretends it didn't.
+
+<</if>>\
+then, through the wood, in a voice like a coat you almost remember:
+
+«WHO IS IT?»
+
+the door asks the questions here. doors accumulate questions. this one has been asked for a very long time and would like, for once, to do the asking.
+
+[[«i don't know who i am»|confess]] — the honest answer
+[[«i'm right here!»|bothsides]] — the true answer
+<<if $syllables.length gte 3>>[[post your name through the keyhole, syllable by syllable|keyhole]] — all your pieces at once. an offering. a key<</if>>\
+[[back away|corridor]] — the knocking follows at a courteous distance
+
+:: confess
+«i don't know who i am,» you tell the door. «i don't know where i am. and i don't know how i'll find them, in the dark of the night — my little friend.»
+
+the knocking stops.
+
+a pause with a great deal of hinge in it.
+
+then, under the door, folded twice like a note passed in class: a scrap of paper.
+
+<<if $syllables.length lt 6>>\
+<<set _syl to setup.drawSyl()>>\
+<<set $syllables to $syllables.concat([_syl])>>\
+on it, one piece of a word —
+
+<span class="syl">_syl</span>
+
+— and beneath, in pencil: <span class="dim">«for the name. from both of us. keep going.»</span>
+<<else>>\
+on it, in pencil: <span class="dim">«you have all your pieces. you know which stage to take them to.»</span>
+<</if>>
+
+[[pocket it|corridor]] — the door resumes knocking, softer now, a metronome for your leaving
+
+:: bothsides [knock]
+«i'm right here!» you say.
+
+«i'm right here!» says the other side — at exactly the same instant, in a voice you almost, //almost// —
+
+<<set $hum to Math.min(7, $hum + 1)>>\
+you fling the door open.
+
+wall. good honest wall, floor to nowhere, humming to itself with its hands in its pockets.
+
+on the wall, in chalk, at your exact eye height, in handwriting you would know anywhere because it is yours:
+
+<span class="man">getting warmer.</span>
+
+[[close the door gently|corridor]] — behind you, two knocks. it means thank you. probably
+
+:: keyhole [knock]
+you kneel at the keyhole and post your name through it, syllable by syllable, like coins into a meter:
+
+<span class="syl"><<= $syllables.slice(0, 3).join("  ")>></span>
+
+the lock swallows three times. a mechanism deeper than the door — deeper than the night the door was cut from — turns over, and over, and
+
+the door does not open. the door was never shut. there was never a door.
+
+(there was always a door.)
+
+<<set $hum to 7>>\
+<<set $performed to true>>\
+<<run if (window.WallHum) { window.WallHum.resolve(); }>>\
+behind you, the hum has gathered itself up off all four walls and is standing there, politely, at about the height of a friend. and then — the hum stops. nothing in this building has ever stopped before.
+
+in the new silence, small, close, delighted:
+
+«//there// you are.»
+
+[[turn around|found]] — slowly. you have waited whole rooms for this
+
+:: cabaret
+a stage the size of a coin. a spotlight with nobody in it, burning anyway, patient as a hole in the night's pocket.
+
+on an easel, a card, its letters cut from somewhere else and pasted, ransom-style:
+
+<span class="man">cabaret <<= either("voltaire", "nowhere", "intérieur", "du mur", "1916")>> — tonight only: <<= either("the nameless, named", "an audience of walls", "the hum, unaccompanied", "you")>></span>
+
+<<if $syllables.length gte 3>>\
+the spotlight, seeing you, adjusts itself one inch. your inch.
+
+[[step into the light and perform your name|perform]] — the hum crowds the dark like a full house
+[[not yet|corridor]] — the light stays lit. it has nowhere better to burn
+<<else>>\
+you check your pockets: <<if $syllables.length is 0>>no name at all yet. not one bone of one.<<else>><<= $syllables.length>> piece<<if $syllables.length gt 1>>s<</if>> of a name — not enough. a name needs three bones to stand up on a stage.<</if>>
+
+<span class="dim">(the walls have pieces. the hat has pieces. the door — if you are honest with it — has pieces. listen. draw. confess.)</span>
+
+[[back into the dark|corridor]] — the spotlight dims a courteous fraction, saving itself for you
+<</if>>
+
+:: hat
+a chair. on the chair, a hat. above the chair, a bare bulb whose filament is shaped like a signature.
+
+pinned to the brim, an instruction card, typewritten, much corrected:
+
+<span class="man">to make a dadaist name</span>
+<span class="dim">take a night. cut the night into words with the scissors of your attention. place the words in the hat. shake gently. do not pray. draw. the name that results will resemble you. no refunds.</span>
+
+<<if $syllables.length gte 6>>\
+the hat is empty now — or rather, everything still in it is yours already, and a hat cannot give you what you are.
+
+[[back into the dark|corridor]] — wear the name lightly. it wears you back
+<<else>>\
+[[draw a scrap|draw]] — your hand disappears to the wrist
+[[refuse to draw|corridor]] — the hat respects this enormously
+<</if>>
+
+:: draw [whisper]
+<<set _syl to setup.drawSyl()>>\
+<<set $syllables to $syllables.concat([_syl])>>\
+your hand comes back holding a scrap of paper the temperature of a wrist.
+
+on it, in letters that keep almost being a face:
+
+<span class="syl">_syl</span>
+
+<<if $syllables.length gte 3>>\
+that makes <<= $syllables.length>>. enough bones for a name. the hum has noticed — it leans in from every wall at once, the whole building going up on one elbow.
+<<else>>\
+a piece of you, maybe. <<= 3 - $syllables.length>> more and it could stand up on its own.
+<</if>>
+
+<<if $syllables.length lt 6>>[[draw again|draw]] — the hat is deeper than the room
+<</if>>\
+[[enough|corridor]] — fold the name into your fist
+
+:: perform [whisper]
+<<set $hum to 7>>\
+<<set $performed to true>>\
+<<run if (window.WallHum) { window.WallHum.resolve(); }>>\
+you step into the spotlight. it is exactly your size. it has been waiting, fitted.
+
+you perform your name:
+
+<span class="syl"><<= $syllables.slice(0, 3).join("  ")>></span>
+
+once like a question. once like an apology. once like a train announcement in a station with no trains, only passengers who have all, every one of them, already arrived.
+
+the walls take it up — <<= either("softly at first", "hugely, from the first bar", "in canon, each wall a beat behind the last", "wrong at first, then exactly right")>> — and the hum bends itself around your syllables until the name and the hum are one machine, and the machine is a voice, and the voice is looking for you and finding you, finding you, found —
+
+and then the hum stops.
+
+(nothing in this building has ever stopped before.)
+
+in the silence where it was, small, close, delighted:
+
+«//there// you are.»
+
+[[turn around|found]] — slowly. you have waited whole rooms for this
+
+:: found
+you turn around.
+
+nothing in the spotlight. nothing in the dark. but the nothing is warm, and it is shaped exactly like a listening.
+
+«i couldn't find you,» you say. «i didn't know where i was. i didn't know who i was.»
+
+«i know,» says your little friend — the hum, the wall, the knock, the voice that goes around all night in your voice. «that's why i hummed. you can't lose someone who is a song. you can only put them down for a while.»
+
+«who is it?» you ask, one more time, for the pleasure of it.
+
+«it's you. it was you the whole time. i'm right here.»
+
+curtain.
+
+<span class="dim">(there is no curtain. the dark bows anyway. somewhere, four walls applaud with the sound of standing perfectly still.)</span>
+
+<<link "begin again, differently">><<run Engine.restart()>><</link>> — the hat reshuffles. the doors migrate. the hum clears its throat
+[[stay in the dark a while|stay]] — the show is over. the dark is not
+
+:: stay
+the hum starts up again — lower now, off duty, humming for its own sake the way a kettle keeps ticking after the tea.
+
+<<= either(
+	"your little friend hums the one about the door. the door, flattered, keeps almost opening.",
+	"the walls pass your syllables between them like contraband, giggling in plaster.",
+	"somewhere a manifesto un-nails itself and settles to the floor, finished at last, believed by nobody, correct.",
+	"the spotlight dims itself politely — an usher with nothing left to ush.",
+	"1916 goes by again, at walking pace, tipping its hat.",
+	"the dark rests its chin on the top of your head. it weighs nothing. it weighs a whole friend.")>>
+
+<<if $offering neq "">><span class="dim">«$offering,» says the wall suddenly, remembering. then, satisfied, nothing.</span>
+
+<</if>>\
+[[go on staying|stay]] — it doesn't mind. it was built for this
+<<link "all right — again, from the top">><<run Engine.restart()>><</link>> — the walls take their places
