@@ -140,8 +140,29 @@ setup.refreshBar = function () {
 (function () {
 	'use strict';
 
-	var ctx = null, master = null, humGain = null, oscA = null, oscB = null,
-		muted = false, level = 1, resolved = false;
+	/* The score, after John Cale c.1965: a just-intonation string-drone cluster
+	   (octave, fifth, seventh partial — never the sweet major third, per the
+	   Theatre of Eternal Music's tuning discipline) under a continuous bowed
+	   scratch, everything through a mild amplifier curve. The near-unison pair
+	   beats slowly the whole night; resolve() is scored as that beating
+	   converging to zero — the searching stops before the sound does. */
+
+	var ctx = null, master = null, shaper = null,
+		droneGain = null, droneLP = null, partials = [],
+		scratchGain = null, scratchBP1 = null, bowLfo = null, bowDepth = null,
+		muted = false, level = 1, resolved = false, afterglow = false,
+		analyser = null;
+
+	var F = 55;
+	var BEAT = 0.35;
+	/* ratio, waveform, relative gain, minimum hum level at which it enters */
+	var PARTIAL_SPECS = [
+		[1.0,  'sawtooth', 0.50, 0],
+		[1.0,  'sawtooth', 0.50, 0],   /* detuned +BEAT Hz — the beating pair */
+		[1.5,  'sawtooth', 0.34, 2],
+		[1.75, 'sawtooth', 0.30, 4],
+		[2.0,  'sawtooth', 0.24, 5]
+	];
 
 	function build() {
 		if (ctx) { return true; }
@@ -151,71 +172,140 @@ setup.refreshBar = function () {
 
 		master = ctx.createGain();
 		master.gain.value = 1;
+
+		var hp = ctx.createBiquadFilter();
+		hp.type = 'highpass';
+		hp.frequency.value = 28;
+
+		shaper = ctx.createWaveShaper();
+		var curve = new Float32Array(1024);
+		for (var i = 0; i < 1024; i++) {
+			var x = (i / 511.5) - 1;
+			curve[i] = Math.tanh(2.2 * x) / Math.tanh(2.2);
+		}
+		shaper.curve = curve;
+
+		shaper.connect(hp);
+		hp.connect(master);
 		master.connect(ctx.destination);
 
-		humGain = ctx.createGain();
-		humGain.gain.value = 0.0001;
-		humGain.connect(master);
+		droneLP = ctx.createBiquadFilter();
+		droneLP.type = 'lowpass';
+		droneLP.frequency.value = 170;
+		droneLP.Q.value = 0.9;
 
-		oscA = ctx.createOscillator();
-		oscA.type = 'sine';
-		oscA.frequency.value = 55;
-		oscB = ctx.createOscillator();
-		oscB.type = 'triangle';
-		oscB.frequency.value = 55.6;
+		droneGain = ctx.createGain();
+		droneGain.gain.value = 0.0001;
+		droneLP.connect(droneGain);
+		droneGain.connect(shaper);
 
-		var mix = ctx.createGain();
-		mix.gain.value = 0.5;
-		oscA.connect(mix);
-		oscB.connect(mix);
+		partials = PARTIAL_SPECS.map(function (spec, idx) {
+			var o = ctx.createOscillator();
+			o.type = spec[1];
+			o.frequency.value = F * spec[0] + (idx === 1 ? BEAT : 0);
+			var g = ctx.createGain();
+			g.gain.value = 0.0001;
+			o.connect(g);
+			g.connect(droneLP);
+			o.start();
+			return { osc: o, gain: g, rel: spec[2], minLevel: spec[3] };
+		});
 
-		var lp = ctx.createBiquadFilter();
-		lp.type = 'lowpass';
-		lp.frequency.value = 220;
-		mix.connect(lp);
-		lp.connect(humGain);
+		var noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 3, ctx.sampleRate);
+		var nd = noiseBuf.getChannelData(0);
+		for (var j = 0; j < nd.length; j++) { nd[j] = Math.random() * 2 - 1; }
+		var noise = ctx.createBufferSource();
+		noise.buffer = noiseBuf;
+		noise.loop = true;
 
-		var lfo = ctx.createOscillator();
-		lfo.frequency.value = 0.11;
-		var lfoGain = ctx.createGain();
-		lfoGain.gain.value = 0.008;
-		lfo.connect(lfoGain);
-		lfoGain.connect(humGain.gain);
+		scratchGain = ctx.createGain();
+		scratchGain.gain.value = 0.0001;
+		scratchGain.connect(shaper);
 
-		oscA.start();
-		oscB.start();
-		lfo.start();
+		/* the viola body: three resonances in parallel */
+		[[340, 2.2, 1.0], [1050, 5.5, 0.55], [2300, 8, 0.28]].forEach(function (r, k) {
+			var bp = ctx.createBiquadFilter();
+			bp.type = 'bandpass';
+			bp.frequency.value = r[0];
+			bp.Q.value = r[1];
+			var trim = ctx.createGain();
+			trim.gain.value = r[2];
+			noise.connect(bp);
+			bp.connect(trim);
+			trim.connect(scratchGain);
+			if (k === 0) { scratchBP1 = bp; }
+		});
+
+		/* the bow: sawing AM on the scratch, plus a slow drift on the body */
+		bowLfo = ctx.createOscillator();
+		bowLfo.type = 'triangle';
+		bowLfo.frequency.value = 0.5;
+		bowDepth = ctx.createGain();
+		bowDepth.gain.value = 0;
+		bowLfo.connect(bowDepth);
+		bowDepth.connect(scratchGain.gain);
+
+		var drift = ctx.createOscillator();
+		drift.frequency.value = 0.083;
+		var driftDepth = ctx.createGain();
+		driftDepth.gain.value = 120;
+		drift.connect(driftDepth);
+		driftDepth.connect(scratchBP1.frequency);
+
+		noise.start();
+		bowLfo.start();
+		drift.start();
 		return true;
 	}
 
-	function humTarget() {
-		return muted ? 0.0001 : 0.006 + 0.009 * level;
+	function effLevel() {
+		return afterglow ? Math.min(level, 2) : level;
 	}
 
-	function applyLevel() {
-		if (!ctx) { return; }
-		humGain.gain.cancelScheduledValues(ctx.currentTime);
-		humGain.gain.setTargetAtTime(humTarget(), ctx.currentTime, 1.2);
+	function applyAll() {
+		if (!ctx || resolved) { return; }
+		var t = ctx.currentTime;
+		var lv = effLevel();
+		var drone = muted || lv === 0 ? 0.0001 : 0.0045 + 0.0055 * lv;
+		var scratch = muted || lv === 0 ? 0.0001 : 0.004 + 0.0042 * lv;
+
+		droneGain.gain.cancelScheduledValues(t);
+		droneGain.gain.setTargetAtTime(drone, t, 1.4);
+		partials.forEach(function (p) {
+			p.gain.gain.cancelScheduledValues(t);
+			p.gain.gain.setTargetAtTime(lv >= p.minLevel ? p.rel : 0.0001, t, 1.8);
+		});
+		droneLP.frequency.setTargetAtTime(150 + 110 * lv, t, 1.6);
+
+		scratchGain.gain.cancelScheduledValues(t);
+		scratchGain.gain.setTargetAtTime(scratch, t, 1.2);
+		bowDepth.gain.setTargetAtTime(muted || lv === 0 ? 0 : scratch, t, 1.2);
+		bowLfo.frequency.setTargetAtTime(0.4 + 0.32 * lv, t, 1.0);
 	}
 
 	window.WallHum = {
 		wake: function () {
 			if (!build()) { return; }
 			if (ctx.state === 'suspended') { ctx.resume(); }
-			applyLevel();
+			applyAll();
 		},
 		set: function (n) {
 			level = Math.max(0, Math.min(7, n || 0));
-			if (resolved) { return; }
-			applyLevel();
+			applyAll();
 		},
 		setMuted: function (m) {
 			muted = !!m;
-			if (!resolved) { applyLevel(); }
+			if (ctx && resolved) {
+				master.gain.setTargetAtTime(muted ? 0.0001 : 1, ctx.currentTime, 0.15);
+				return;
+			}
+			applyAll();
 		},
 		whisper: function () {
+			/* sul ponticello: one scrape drawn down the string */
 			if (!ctx || muted) { return; }
-			var dur = 0.9;
+			var dur = 1.1;
+			var t = ctx.currentTime;
 			var buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate);
 			var d = buf.getChannelData(0);
 			for (var i = 0; i < d.length; i++) { d[i] = (Math.random() * 2 - 1) * 0.6; }
@@ -223,44 +313,106 @@ setup.refreshBar = function () {
 			src.buffer = buf;
 			var bp = ctx.createBiquadFilter();
 			bp.type = 'bandpass';
-			bp.frequency.value = 1600 + Math.random() * 900;
-			bp.Q.value = 6;
+			bp.Q.value = 9;
+			bp.frequency.setValueAtTime(2400 + Math.random() * 600, t);
+			bp.frequency.exponentialRampToValueAtTime(750, t + dur);
 			var g = ctx.createGain();
-			g.gain.value = 0.0001;
-			g.gain.setTargetAtTime(0.05, ctx.currentTime, 0.08);
-			g.gain.setTargetAtTime(0.0001, ctx.currentTime + dur * 0.5, 0.18);
+			g.gain.setValueAtTime(0.0001, t);
+			for (var s = 0; s < 5; s++) {
+				g.gain.linearRampToValueAtTime(0.012 + Math.random() * 0.035, t + 0.05 + s * 0.09);
+			}
+			g.gain.setTargetAtTime(0.0001, t + 0.55, 0.16);
 			src.connect(bp);
 			bp.connect(g);
-			g.connect(master);
+			g.connect(shaper);
 			src.start();
 		},
 		knock: function () {
+			/* col legno: the wood of the bow against the wood of the door */
 			if (!ctx || muted) { return; }
 			var t = ctx.currentTime;
-			[0, 0.28].forEach(function (dt) {
+			[0, 0.3].forEach(function (dt) {
 				var o = ctx.createOscillator();
 				o.type = 'sine';
-				o.frequency.setValueAtTime(82, t + dt);
-				o.frequency.exponentialRampToValueAtTime(46, t + dt + 0.11);
+				o.frequency.setValueAtTime(88, t + dt);
+				o.frequency.exponentialRampToValueAtTime(46, t + dt + 0.1);
 				var g = ctx.createGain();
-				g.gain.setValueAtTime(0.16, t + dt);
-				g.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.22);
+				g.gain.setValueAtTime(0.15, t + dt);
+				g.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.2);
 				o.connect(g);
-				g.connect(master);
+				g.connect(shaper);
 				o.start(t + dt);
-				o.stop(t + dt + 0.25);
+				o.stop(t + dt + 0.24);
+
+				var nb = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.03), ctx.sampleRate);
+				var nda = nb.getChannelData(0);
+				for (var i = 0; i < nda.length; i++) { nda[i] = Math.random() * 2 - 1; }
+				var ns = ctx.createBufferSource();
+				ns.buffer = nb;
+				var nbp = ctx.createBiquadFilter();
+				nbp.type = 'bandpass';
+				nbp.frequency.value = 680;
+				nbp.Q.value = 1.2;
+				var ng = ctx.createGain();
+				ng.gain.setValueAtTime(0.09, t + dt);
+				ng.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.06);
+				ns.connect(nbp);
+				nbp.connect(ng);
+				ng.connect(shaper);
+				ns.start(t + dt);
 			});
 		},
 		resolve: function () {
 			if (!ctx) { return; }
 			resolved = true;
+			afterglow = true;
 			var t = ctx.currentTime;
-			oscB.frequency.setTargetAtTime(82.5, t, 0.8);
-			oscA.frequency.setTargetAtTime(55, t, 0.8);
-			humGain.gain.cancelScheduledValues(t);
-			humGain.gain.setTargetAtTime(muted ? 0.0001 : 0.07, t, 0.5);
-			humGain.gain.setTargetAtTime(0.0001, t + 3.2, 0.6);
-			window.setTimeout(function () { resolved = false; level = 1; }, 7000);
+			/* the beating pair converges — the searching stops */
+			partials[1].osc.frequency.setTargetAtTime(F, t, 0.7);
+			/* the bow lifts */
+			scratchGain.gain.cancelScheduledValues(t);
+			scratchGain.gain.setTargetAtTime(0.0001, t, 0.5);
+			bowDepth.gain.setTargetAtTime(0, t, 0.5);
+			/* one amplified swell, pure now, then the stop */
+			droneLP.frequency.setTargetAtTime(1050, t, 0.8);
+			droneGain.gain.cancelScheduledValues(t);
+			droneGain.gain.setTargetAtTime(muted ? 0.0001 : 0.055, t, 0.45);
+			droneGain.gain.setTargetAtTime(0.0001, t + 3.2, 0.55);
+			window.setTimeout(function () {
+				resolved = false;
+				partials[1].osc.frequency.setTargetAtTime(F + BEAT, ctx.currentTime, 2.5);
+				applyAll();
+			}, 7000);
+		},
+		meter: function () {
+			/* the ear: numeric truth for a deaf harness */
+			if (!ctx) { return null; }
+			if (!analyser) {
+				analyser = ctx.createAnalyser();
+				analyser.fftSize = 16384;
+				analyser.smoothingTimeConstant = 0.4;
+				master.connect(analyser);
+			}
+			var td = new Float32Array(analyser.fftSize);
+			analyser.getFloatTimeDomainData(td);
+			var sum = 0;
+			for (var i = 0; i < td.length; i++) { sum += td[i] * td[i]; }
+			var fd = new Float32Array(analyser.frequencyBinCount);
+			analyser.getFloatFrequencyData(fd);
+			var binHz = ctx.sampleRate / analyser.fftSize;
+			var peaks = [];
+			for (var b = Math.floor(20 / binHz); b < Math.floor(4000 / binHz); b++) {
+				if (fd[b] > -95 && fd[b] >= fd[b - 1] && fd[b] >= fd[b + 1]) {
+					peaks.push([Math.round(b * binHz * 10) / 10, Math.round(fd[b])]);
+				}
+			}
+			peaks.sort(function (a, b2) { return b2[1] - a[1]; });
+			return {
+				state: ctx.state, level: level, effLevel: effLevel(),
+				muted: muted, resolved: resolved, afterglow: afterglow,
+				rms: Math.sqrt(sum / td.length),
+				peaks: peaks.slice(0, 8)
+			};
 		}
 	};
 
